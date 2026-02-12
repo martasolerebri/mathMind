@@ -1,1 +1,1 @@
-# streamMind
+# mathMind
