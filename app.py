@@ -6,63 +6,40 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
-import youtube_transcript_api
 
-st.set_page_config(page_title="StreamMind AI", page_icon="🎬", layout="wide")
-st.title("🎬 StreamMind: Chat with your Videos")
+st.set_page_config(page_title="MathMind AI", page_icon="🧮", layout="wide")
+st.title("🧮 MathMind: Your AI Math Tutor")
+st.markdown("Solve complex problems and learn the logic behind them using **Groq** and **LaTeX**.")
 
 with st.sidebar:
     st.header("Credentials")
     groq_api_key = st.text_input("Groq API Key", type="password")
     hf_api_key = st.text_input("Hugging Face API Key", type="password")
     st.divider()
-    st.header("Content Source")
-    video_url = st.text_input("YouTube URL")
+    st.info("This tutor uses RAG to fetch mathematical rules and Groq to solve equations in milliseconds.")
 
 if not groq_api_key or not hf_api_key:
-    st.warning("Please enter your API Keys.")
+    st.warning("Please enter your API Keys to start.")
     st.stop()
 
 @st.cache_resource
-def load_models(groq_key):
-    llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.3)
+def load_math_engine(groq_key):
+    llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.1)
     embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
-    return llm, embeddings
+    
+    # Simple RAG: Basic math rules for the AI to follow
+    math_rules = [
+        "Pythagorean theorem: a^2 + b^2 = c^2",
+        "Quadratic formula: x = (-b ± sqrt(b^2 - 4ac)) / 2a",
+        "Derivative of x^n is n*x^(n-1)",
+        "Integral of 1/x is ln|x|",
+        "Area of a circle: πr^2",
+        "Chain rule: d/dx [f(g(x))] = f'(g(x)) * g'(x)"
+    ]
+    vectorstore = FAISS.from_texts(math_rules, embedding=embeddings)
+    return llm, vectorstore.as_retriever()
 
-llm, embeddings = load_models(groq_api_key)
-
-def get_video_id(url):
-    if "v=" in url: return url.split("v=")[1].split("&")[0]
-    elif "be/" in url: return url.split("be/")[1].split("?")[0]
-    return None
-
-def process_video(url):
-    video_id = get_video_id(url)
-    if not video_id:
-        st.error("Invalid YouTube URL")
-        return None
-    try:
-        # Cambio clave: llamada directa al modulo
-        transcript_list = youtube_transcript_api.YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'es'])
-        full_text = " ".join([t['text'] for t in transcript_list])
-        
-        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = splitter.split_text(full_text)
-        
-        vs = FAISS.from_texts(chunks, embedding=embeddings)
-        return vs.as_retriever(search_kwargs={"k": 5})
-    except Exception as e:
-        st.error(f"Error: {str(e)}")
-        return None
-
-if video_url:
-    if "current_video" not in st.session_state or st.session_state.current_video != video_url:
-        with st.spinner("Processing..."):
-            retriever = process_video(video_url)
-            if retriever:
-                st.session_state.retriever = retriever
-                st.session_state.current_video = video_url
-                st.session_state.messages = []
+llm, retriever = load_math_engine(groq_api_key)
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -70,20 +47,27 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input("Ask about the video"):
-    if "retriever" not in st.session_state:
-        st.error("No video data.")
-    else:
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        st.chat_message("user").write(prompt)
+if prompt := st.chat_input("Enter a math problem (e.g., 'Solve 2x + 5 = 15' or 'Derive sin(x)^2')"):
+    st.session_state.messages.append({"role": "user", "content": prompt})
+    st.chat_message("user").write(prompt)
 
-        qa_prompt = ChatPromptTemplate.from_template("Context: {context}\n\nQuestion: {input}")
-        chain = (
-            {"context": st.session_state.retriever, "input": RunnablePassthrough()}
-            | qa_prompt | llm | StrOutputParser()
-        )
+    template = """You are a professional Math Tutor. 
+    1. Use the following math rules as reference: {context}
+    2. Solve the user's problem step-by-step.
+    3. Use LaTeX for ALL mathematical formulas. Wrap equations in $$ for blocks and $ for inline.
+    4. Be concise and clear.
 
-        with st.chat_message("assistant"):
-            response = chain.invoke(prompt)
-            st.write(response)
-            st.session_state.messages.append({"role": "assistant", "content": response})
+    Problem: {input}
+    Solution:"""
+    
+    qa_prompt = ChatPromptTemplate.from_template(template)
+
+    chain = (
+        {"context": retriever, "input": RunnablePassthrough()}
+        | qa_prompt | llm | StrOutputParser()
+    )
+
+    with st.chat_message("assistant"):
+        response = chain.invoke(prompt)
+        st.write(response)
+        st.session_state.messages.append({"role": "assistant", "content": response})
