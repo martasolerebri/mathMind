@@ -3,14 +3,13 @@ from langchain_groq import ChatGroq
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.document_loaders import YoutubeLoader
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.runnables import RunnablePassthrough
+from youtube_transcript_api import YouTubeTranscriptApi
 
 st.set_page_config(page_title="StreamMind AI", page_icon="🎬", layout="wide")
 st.title("🎬 StreamMind: Chat with your Videos")
-st.markdown("Analyze YouTube transcripts instantly using **Groq** (Llama 3) and **RAG**.")
 
 with st.sidebar:
     st.header("Credentials")
@@ -18,59 +17,52 @@ with st.sidebar:
     hf_api_key = st.text_input("Hugging Face API Key", type="password")
     st.divider()
     st.header("Content Source")
-    video_url = st.text_input("YouTube URL", placeholder="https://www.youtube.com/watch?v=...")
-    st.divider()
-    st.info("If you get an HTTP 400 error, the video might have transcripts disabled or YouTube is rate-limiting the request.")
+    video_url = st.text_input("YouTube URL")
 
 if not groq_api_key or not hf_api_key:
-    st.warning("Please enter your API Keys in the sidebar to begin.")
+    st.warning("Please enter your API Keys.")
     st.stop()
 
 @st.cache_resource
-def load_base_models(groq_key):
-    llm = ChatGroq(
-        api_key=groq_key, 
-        model="llama-3.3-70b-versatile", 
-        temperature=0.3
-    )
-    embeddings = HuggingFaceEmbeddings(
-        model_name="sentence-transformers/all-MiniLM-L6-v2",
-        model_kwargs={'device': 'cpu'}
-    )
+def load_models(groq_key):
+    llm = ChatGroq(api_key=groq_key, model="llama-3.3-70b-versatile", temperature=0.3)
+    embeddings = HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2")
     return llm, embeddings
 
-llm, embeddings = load_base_models(groq_api_key)
+llm, embeddings = load_models(groq_api_key)
+
+def get_video_id(url):
+    if "v=" in url: return url.split("v=")[1].split("&")[0]
+    elif "be/" in url: return url.split("be/")[1].split("?")[0]
+    return None
 
 def process_video(url):
+    video_id = get_video_id(url)
+    if not video_id:
+        st.error("Invalid YouTube URL")
+        return None
     try:
-        loader = YoutubeLoader.from_youtube_url(
-            url, 
-            add_video_info=True,
-            language=["en", "es"],
-            translation="en"
-        )
-        data = loader.load()
+        transcript_list = YouTubeTranscriptApi.get_transcript(video_id, languages=['en', 'es'])
+        full_text = " ".join([t['text'] for t in transcript_list])
         
-        if not data:
-            return None
-
-        text_splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
-        chunks = text_splitter.split_documents(data)
-        vectorstore = FAISS.from_documents(chunks, embedding=embeddings)
-        return vectorstore.as_retriever(search_kwargs={"k": 5})
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+        chunks = splitter.split_text(full_text)
+        
+        vs = FAISS.from_texts(chunks, embedding=embeddings)
+        return vs.as_retriever(search_kwargs={"k": 5})
     except Exception as e:
-        st.error(f"YouTube Error: {str(e)}")
+        st.error(f"Error: {str(e)}")
         return None
 
 if video_url:
     if "current_video" not in st.session_state or st.session_state.current_video != video_url:
-        with st.spinner("Processing video transcript..."):
+        with st.spinner("Extracting transcript..."):
             retriever = process_video(video_url)
             if retriever:
                 st.session_state.retriever = retriever
                 st.session_state.current_video = video_url
-                st.session_state.messages = [] 
-                st.success("Video indexed successfully!")
+                st.session_state.messages = []
+                st.success("Ready!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -78,23 +70,15 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input("Ask something about the video..."):
+if prompt := st.chat_input("Ask me anything about the video"):
     if "retriever" not in st.session_state:
-        st.error("Please provide a valid YouTube URL with captions.")
+        st.error("Load a video first.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        system_prompt = (
-            "You are an expert assistant. Answer based ONLY on the transcript. "
-            "If the answer isn't there, say you don't know. "
-            "Context:\n{context}"
-        )
-        
-        qa_prompt = ChatPromptTemplate.from_messages([
-            ("system", system_prompt),
-            ("human", "{input}"),
-        ])
+        template = "Answer based on transcript:\n{context}\n\nQuestion: {input}"
+        qa_prompt = ChatPromptTemplate.from_template(template)
 
         chain = (
             {"context": st.session_state.retriever, "input": RunnablePassthrough()}
@@ -104,7 +88,6 @@ if prompt := st.chat_input("Ask something about the video..."):
         )
 
         with st.chat_message("assistant"):
-            with st.spinner("Thinking..."):
-                response = chain.invoke(prompt)
-                st.write(response)
-                st.session_state.messages.append({"role": "assistant", "content": response})
+            response = chain.invoke(prompt)
+            st.write(response)
+            st.session_state.messages.append({"role": "assistant", "content": response})
