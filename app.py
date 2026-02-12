@@ -51,18 +51,19 @@ def process_video(url):
         vs = FAISS.from_texts(chunks, embedding=embeddings)
         return vs.as_retriever(search_kwargs={"k": 5})
     except Exception as e:
-        st.error(f"Error: {str(e)}")
+        st.error(f"Transcript Error: {str(e)}")
+        st.info("Note: Make sure the video has captions enabled.")
         return None
 
 if video_url:
     if "current_video" not in st.session_state or st.session_state.current_video != video_url:
-        with st.spinner("Extracting transcript..."):
+        with st.spinner("Analyzing video..."):
             retriever = process_video(video_url)
             if retriever:
                 st.session_state.retriever = retriever
                 st.session_state.current_video = video_url
                 st.session_state.messages = []
-                st.success("Ready!")
+                st.success("Ready to chat!")
 
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -70,14 +71,17 @@ if "messages" not in st.session_state:
 for msg in st.session_state.messages:
     st.chat_message(msg["role"]).write(msg["content"])
 
-if prompt := st.chat_input("Ask me anything about the video"):
+if prompt := st.chat_input("Ask about the video"):
     if "retriever" not in st.session_state:
-        st.error("Load a video first.")
+        st.error("No video data found.")
     else:
         st.session_state.messages.append({"role": "user", "content": prompt})
         st.chat_message("user").write(prompt)
 
-        template = "Answer based on transcript:\n{context}\n\nQuestion: {input}"
+        template = """Answer the question based strictly on the transcript provided.
+        Context: {context}
+        Question: {input}"""
+        
         qa_prompt = ChatPromptTemplate.from_template(template)
 
         chain = (
