@@ -13,7 +13,7 @@ st.title("📖 Goodreads AI Librarian")
 
 st.markdown("""
 Upload your Goodreads library CSV to chat about your reading history, find forgotten favorites, or get personalized recommendations!
-**To import or export your books, go to goodreads desktop, find My Books, then click on Import and export under Tools on the left.
+**To import or export your books, go to goodreads desktop, find My Books, then click on Import and export under Tools on the left.**
 """)
 
 with st.sidebar:

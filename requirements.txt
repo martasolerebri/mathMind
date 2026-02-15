@@ -1,11 +1,8 @@
 streamlit
 pandas
-numpy
-scikit-learn
-networkx
-pyvis
-langchain-groq
-langchain-huggingface
+langchain
 langchain-community
 langchain-core
-sentence-transformers
+langchain-groq
+langchain-huggingface
+faiss-cpu
